@@ -1,0 +1,148 @@
+diff --git a/Makefile b/Makefile
+index 09d790c..81b7744 100644
+--- a/Makefile
++++ b/Makefile
+@@ -181,6 +181,7 @@ UPROGS=\
+ 	_usertests\
+ 	_wc\
+ 	_zombie\
++	_test_count\
+ 
+ fs.img: mkfs README $(UPROGS)
+ 	./mkfs fs.img README $(UPROGS)
+@@ -250,7 +251,7 @@ qemu-nox-gdb: fs.img xv6.img .gdbinit
+ EXTRA=\
+ 	mkfs.c ulib.c user.h cat.c echo.c forktest.c grep.c kill.c\
+ 	ln.c ls.c mkdir.c rm.c stressfs.c usertests.c wc.c zombie.c\
+-	printf.c umalloc.c\
++	printf.c umalloc.c test_count.c\
+ 	README dot-bochsrc *.pl toc.* runoff runoff1 runoff.list\
+ 	.gdbinit.tmpl gdbutil\
+ 
+diff --git a/defs.h b/defs.h
+index 82fb982..6564842 100644
+--- a/defs.h
++++ b/defs.h
+@@ -156,6 +156,12 @@ int             fetchint(uint, int*);
+ int             fetchstr(uint, char**);
+ void            syscall(void);
+ 
++// # WARNING OWN ADDITION
++// We add the extern variables to be used later by the *.c files
++extern struct spinlock readlock;
++extern int read_counter;
++
++
+ // timer.c
+ void            timerinit(void);
+ 
+diff --git a/syscall.c b/syscall.c
+index ee85261..e080982 100644
+--- a/syscall.c
++++ b/syscall.c
+@@ -6,6 +6,7 @@
+ #include "proc.h"
+ #include "x86.h"
+ #include "syscall.h"
++#include "spinlock.h"
+ 
+ // User code makes a system call with INT T_SYSCALL.
+ // System call number in %eax.
+@@ -104,6 +105,9 @@ extern int sys_wait(void);
+ extern int sys_write(void);
+ extern int sys_uptime(void);
+ 
++// # WARNING My own syscall for getting the call count of read()
++extern int sys_getreadcount(void);
++
+ static int (*syscalls[])(void) = {
+ [SYS_fork]    sys_fork,
+ [SYS_exit]    sys_exit,
+@@ -126,8 +130,13 @@ static int (*syscalls[])(void) = {
+ [SYS_link]    sys_link,
+ [SYS_mkdir]   sys_mkdir,
+ [SYS_close]   sys_close,
++[SYS_getreadcount]   sys_getreadcount,
+ };
+ 
++struct spinlock readlock;
++int read_counter = 0;
++
++
+ void
+ syscall(void)
+ {
+@@ -136,7 +145,16 @@ syscall(void)
+ 
+   num = curproc->tf->eax;
+   if(num > 0 && num < NELEM(syscalls) && syscalls[num]) {
+-    curproc->tf->eax = syscalls[num]();
++	curproc->tf->eax = syscalls[num]();
++  	// # WARNING OWN ADDITION:
++	// We check if the syscall called is read() and then lock up for concurrency
++	// and update the counter and then just release and proceed with the call
++	  if (SYS_read == num) {
++		initlock(&readlock, "readlock");
++		acquire(&readlock);
++		read_counter++;
++		release(&readlock);
++	}
+   } else {
+     cprintf("%d %s: unknown sys call %d\n",
+             curproc->pid, curproc->name, num);
+diff --git a/syscall.h b/syscall.h
+index bc5f356..c5ebb23 100644
+--- a/syscall.h
++++ b/syscall.h
+@@ -20,3 +20,4 @@
+ #define SYS_link   19
+ #define SYS_mkdir  20
+ #define SYS_close  21
++#define SYS_getreadcount 22
+diff --git a/sysproc.c b/sysproc.c
+index 0686d29..b93c2e5 100644
+--- a/sysproc.c
++++ b/sysproc.c
+@@ -6,6 +6,17 @@
+ #include "memlayout.h"
+ #include "mmu.h"
+ #include "proc.h"
++#include "spinlock.h"
++
++int
++sys_getreadcount(void) {
++	// Begin critical section
++	acquire(&readlock);
++	int ret = read_counter;
++	release(&readlock);
++	// End critical section and return with temp value
++	return ret;
++}
+ 
+ int
+ sys_fork(void)
+diff --git a/user.h b/user.h
+index 4f99c52..6bf9d9e 100644
+--- a/user.h
++++ b/user.h
+@@ -24,6 +24,11 @@ char* sbrk(int);
+ int sleep(int);
+ int uptime(void);
+ 
++// # WARNING OWN ADDITION
++// We just add our own syscall definition so we can call it from user programs
++int getreadcount(void);
++
++
+ // ulib.c
+ int stat(const char*, struct stat*);
+ char* strcpy(char*, const char*);
+diff --git a/usys.S b/usys.S
+index 8bfd8a1..7af84de 100644
+--- a/usys.S
++++ b/usys.S
+@@ -29,3 +29,4 @@ SYSCALL(getpid)
+ SYSCALL(sbrk)
+ SYSCALL(sleep)
+ SYSCALL(uptime)
++SYSCALL(getreadcount)
