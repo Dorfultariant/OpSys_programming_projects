@@ -7,7 +7,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 
-#define BUFFER 1024
+#define BUFFER 4096
 
 /*
     Function fileHandler is responsible for opening and closing a file
