@@ -59,10 +59,16 @@ void searcher(FILE *f, char term[]) {
     if ((strstr(line, term)) != NULL) {
       printf("%s", line);
     }
+    // If the user gives empty line, the execution is stopped
+    // This was not defined in the description...
+    if (line[0] == '\n' && f == stdin) {
+      break;
+    }
     free(line);
     line = NULL;
   }
 
   free(line);
+  line = NULL;
   return;
 }
